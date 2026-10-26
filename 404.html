@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shorts 連續播放器</title>
+<script>
+  // 支援把 YouTube 連結直接接在網址後面，例如：
+  //   /ytshortplayer/https://www.youtube.com/playlist?list=PLxxxx
+  // GitHub Pages 找不到這個路徑會顯示本頁，這裡從網址取出 list= 後轉到播放器
+  (function () {
+    var base = "/ytshortplayer/";
+    var m = /[?&]list=([A-Za-z0-9_-]+)/.exec(location.href);
+    location.replace(m ? base + "?list=" + m[1] : base);
+  })();
+</script>
+<style>body { font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif; padding: 24px; background: #171412; color: #ece5dc; } a { color: #e3906b; }</style>
+</head>
+<body>
+<p>正在轉到播放器…<br><a href="/ytshortplayer/">沒有自動跳轉請點這裡</a></p>
+</body>
+</html>

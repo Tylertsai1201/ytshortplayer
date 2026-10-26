@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- YouTube 內嵌播放器要靠 Referer 辨識來源，少了會出現「錯誤 153」 -->
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Shorts 連續播放器</title>
+<meta name="description" content="YouTube Shorts 播放清單連續播放：順序或隨機，自動接下一部，記住上次看到哪裡。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@500;700&display=swap">
+<style>
+:root {
+  --bg: #f6f4f1; --surface: #ffffff; --fg: #26211d; --muted: #6e655c; --line: #e4ddd4;
+  --accent: #8a3b1e; --accent-soft: #f3e6df; --gold: #a87c22;
+  --font-verse: "Noto Serif TC", "Source Han Serif TC", "PMingLiU", serif;
+  --font-body: "Noto Sans TC", "Microsoft JhengHei", "PingFang TC", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #171412; --surface: #201c19; --fg: #ece5dc; --muted: #a89d91; --line: #362f29;
+    --accent: #e3906b; --accent-soft: #3a2820; --gold: #d6b05c;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-body);
+  font-size: 16px; line-height: 1.6; -webkit-text-size-adjust: 100%;
+}
+.wrap {
+  max-width: 1240px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: max(16px, env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-bottom, 0px));
+}
+header { border-bottom: 2px solid var(--accent); padding-bottom: 8px; margin-bottom: 16px; }
+h1 { font-family: var(--font-verse); color: var(--accent); font-size: 1.6rem; line-height: 1.3; margin: 0; text-wrap: balance; }
+.sub { color: var(--muted); font-size: 0.92rem; margin: 2px 0 0; }
+.sub a { color: var(--muted); font-size: 0.85rem; }
+
+/* 首頁：貼上播放清單連結 */
+.home { max-width: 640px; }
+.home p { margin: 0 0 12px; }
+.paste { display: flex; gap: 8px; margin: 16px 0 8px; }
+.paste input {
+  flex: 1; min-width: 0; font: inherit; height: 44px; padding: 0 12px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--fg);
+}
+.err { color: var(--accent); font-size: 0.9rem; min-height: 1.4em; }
+.hint { font-size: 0.85rem; color: var(--muted); }
+
+.layout { display: grid; gap: 16px; }
+@media (min-width: 900px) {
+  .layout { grid-template-columns: minmax(0, 1fr) 340px; align-items: start; gap: 24px; }
+}
+
+.screen { position: relative; aspect-ratio: 16 / 9; max-width: 100%; background: #000; border-radius: 10px; overflow: hidden; }
+.screen > div, .screen iframe { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* 播放後：直式 9:16 等比例放大，高度不超過「螢幕扣掉標題」 */
+.screen.big {
+  aspect-ratio: 9 / 16; width: auto; margin-inline: auto;
+  height: min(calc(100vh - var(--head-h, 100px) - 70px), 160vw);
+}
+@supports (height: 100svh) { .screen.big { height: min(calc(100svh - var(--head-h, 100px) - 70px), 160vw); } }
+@media (min-width: 900px) { .screen.big { height: calc(100vh - var(--head-h, 100px) - 70px); } }
+/* 讀清單用的隱形播放器：不能 display:none，否則 YouTube 不會載入 */
+#reader { position: fixed; left: -9999px; top: 0; width: 200px; height: 200px; }
+/* 自製進度條只在觸控裝置顯示：手機的 Shorts 播放器沒有進度條，電腦版 YouTube 播放器自己有 */
+.seekbar { display: none; align-items: center; gap: 10px; margin-top: 8px; }
+@media (hover: none) and (pointer: coarse) { .seekbar { display: flex; } }
+.seekbar input { flex: 1; min-width: 0; accent-color: var(--accent); height: 28px; }
+.seekbar span { font-size: 0.85rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.tip { margin: 0 0 10px; padding: 8px 12px; border: 1px solid var(--gold); border-radius: 8px; font-size: 0.9rem; background: var(--accent-soft); }
+.screen + .tip { margin: 10px 0 0; }
+.tip a { color: var(--accent); font-weight: 700; }
+.now { margin-top: 12px; }
+.now .ep { font-size: 0.85rem; color: var(--muted); }
+.now h2 { font-family: var(--font-verse); font-size: 1.2rem; line-height: 1.45; margin: 0; }
+.resume { margin-top: 6px; font-size: 0.88rem; color: var(--gold); min-height: 1.4em; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
+.btn {
+  font: inherit; font-size: 0.92rem; height: 40px; padding: 0 14px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer;
+}
+.btn:hover { border-color: var(--accent); }
+.btn:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+.btn.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); height: 44px; }
+.mode { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.mode button { font: inherit; font-size: 0.92rem; height: 38px; padding: 0 14px; border: 0; background: var(--surface); color: var(--muted); cursor: pointer; }
+.mode button[aria-pressed="true"] { background: var(--accent); color: var(--surface); }
+.spacer { flex: 1; }
+.progress { font-size: 0.85rem; color: var(--muted); }
+
+aside { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+.list-head { padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
+.list-head input {
+  flex: 1; min-width: 0; font: inherit; font-size: 0.92rem; height: 36px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg);
+}
+ol { list-style: none; margin: 0; padding: 4px 0; overflow-y: auto; max-height: 60vh; position: relative; }
+@media (min-width: 900px) { ol { max-height: calc(100vh - 190px); } }
+li button {
+  display: grid; grid-template-columns: 2.6em minmax(0, 1fr) 1.2em; gap: 6px; width: 100%;
+  text-align: left; font: inherit; font-size: 0.9rem; line-height: 1.45; padding: 7px 12px;
+  border: 0; background: none; color: var(--fg); cursor: pointer;
+}
+li button:hover { background: var(--accent-soft); }
+li button .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+li button .ok { color: var(--gold); text-align: right; }
+li button[aria-current="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.note { font-size: 0.8rem; color: var(--muted); padding: 8px 12px; border-top: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="h1">Shorts 連續播放器</h1>
+    <p class="sub" id="sub">YouTube Shorts 播放清單，一部接一部播</p>
+  </header>
+
+  <!-- 首頁：沒有指定清單時 -->
+  <section class="home" id="home" hidden>
+    <p>貼上 YouTube <b>公開</b>播放清單的連結，就能連續播放、隨機播放，並記住上次看到哪裡。</p>
+    <form class="paste" id="pasteForm">
+      <input id="pasteInput" type="text" inputmode="url" placeholder="https://www.youtube.com/playlist?list=…" aria-label="播放清單連結">
+      <button class="btn primary" type="submit">開始</button>
+    </form>
+    <div class="err" id="pasteErr"></div>
+    <p class="hint">開始後的網址可以直接分享給別人。不用登入、不用金鑰；進度記在各自的瀏覽器裡。</p>
+  </section>
+
+  <!-- 播放器 -->
+  <div class="layout" id="app" hidden>
+    <main>
+      <p class="tip" id="lineTip" hidden>在 LINE 裡可能無法播放，建議 <a id="lineOpen" href="#">改用瀏覽器開啟</a>（進度才記得住）</p>
+      <div class="screen"><div id="yt"></div></div>
+      <div class="seekbar"><input id="seek" type="range" min="0" max="1" step="0.1" value="0" aria-label="播放進度"><span id="time">0:00 / 0:00</span></div>
+      <div class="tip" id="fallback" hidden><span id="fbMsg">這裡無法內嵌播放</span>。<a id="fbYt" href="#" target="_blank" rel="noopener">到 YouTube 觀看</a></div>
+      <div class="now">
+        <div class="ep" id="nowEp">讀取播放清單中…</div>
+        <h2 id="nowTitle"></h2>
+        <div class="resume" id="resume"></div>
+      </div>
+      <div class="controls">
+        <button class="btn" id="prevBtn" type="button">上一集</button>
+        <button class="btn" id="nextBtn" type="button">下一集</button>
+        <div class="mode" role="group" aria-label="播放順序">
+          <button type="button" id="modeSeq" aria-pressed="true">順序</button>
+          <button type="button" id="modeShuf" aria-pressed="false">隨機</button>
+        </div>
+        <span class="spacer"></span>
+        <span class="progress" id="progress"></span>
+      </div>
+    </main>
+
+    <aside aria-label="集數清單">
+      <div class="list-head"><input id="q" type="search" placeholder="搜尋集數或關鍵字" aria-label="搜尋集數或關鍵字"></div>
+      <ol id="list"></ol>
+      <div class="note">進度存在這台裝置的瀏覽器裡；換手機或電腦會從頭開始。</div>
+    </aside>
+  </div>
+</div>
+<div id="reader"></div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+
+  // 從網址或貼上的文字取出播放清單 ID
+  function parseList(text) {
+    text = (text || "").trim();
+    var m = /[?&]list=([A-Za-z0-9_-]+)/.exec(text);
+    if (m) return m[1];
+    if (/^(PL|UU|FL|OL|LL)[A-Za-z0-9_-]{8,}$/.test(text)) return text;
+    return null;
+  }
+  var LIST = parseList(location.search);
+
+  // ---------- 首頁 ----------
+  if (!LIST) {
+    $("home").hidden = false;
+    $("pasteForm").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var id = parseList($("pasteInput").value);
+      if (!id) { $("pasteErr").textContent = "看不出播放清單 ID，請貼上含有「list=」的 YouTube 連結。"; return; }
+      location.search = "?list=" + id;
+    });
+    return;
+  }
+
+  // ---------- 播放器 ----------
+  $("app").hidden = false;
+  // 自訂標題由連結帶入：?list=…&title=…&sub=…（播放器本身不記任何特定清單）
+  var params = new URLSearchParams(location.search);
+  var CUSTOM = { title: params.get("title"), sub: params.get("sub") };
+  var KEY = "ytsp:" + LIST, LIST_KEY = "ytsp-list:" + LIST, META_KEY = "ytsp-meta:" + LIST, TITLE_KEY = "ytsp-titles";
+  function load(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
+  function store(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+
+  // 記憶：模式、隨機順序、目前影片與秒數、看完的
+  var st = { mode: "seq", order: [], cur: null, t: 0, done: {} };
+  var saved = load(KEY);
+  if (saved) st = Object.assign(st, saved);
+  function save() { store(KEY, st); }
+
+  var TITLES = load(TITLE_KEY) || {};
+  var live = (load(LIST_KEY) || {}).ids || [];  // YouTube 清單的原始順序
+  var ids = [];                                  // 顯示與播放用的順序
+  var player = null, ready = false;
+
+  // 標題與副標
+  function setHead(title, sub) {
+    $("h1").textContent = title; document.title = title;
+    $("sub").innerHTML = (sub ? sub.replace(/</g, "&lt;") + "　" : "") +
+      '<a href="https://www.youtube.com/playlist?list=' + LIST + '" target="_blank" rel="noopener">在 YouTube 開啟播放清單</a>';
+  }
+  var meta = load(META_KEY);
+  if (CUSTOM.title) setHead(CUSTOM.title, CUSTOM.sub);
+  else {
+    setHead(meta ? meta.title : "播放清單", meta ? meta.author : "");
+    fetch("https://www.youtube.com/oembed?format=json&url=" + encodeURIComponent("https://www.youtube.com/playlist?list=" + LIST))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d) { store(META_KEY, { title: d.title, author: d.author_name }); setHead(d.title, d.author_name); } })
+      .catch(function () {});
+  }
+
+  function shuffle(a) {
+    for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var x = a[i]; a[i] = a[j]; a[j] = x; }
+    return a;
+  }
+  // 隨機順序：保留已排好的，新出現的影片隨機插進還沒播的部分
+  function syncOrder() {
+    var have = {}; st.order = st.order.filter(function (id) { return ids.indexOf(id) >= 0 && !have[id] && (have[id] = 1); });
+    var fresh = shuffle(ids.filter(function (id) { return !have[id]; }));
+    var pos = Math.max(0, st.order.indexOf(st.cur) + 1);
+    fresh.forEach(function (id) { st.order.splice(pos + Math.floor(Math.random() * (st.order.length - pos + 1)), 0, id); });
+  }
+  function seq() { return st.mode === "shuffle" ? st.order : ids; }
+  function step(d) {
+    var s = seq(), i = s.indexOf(st.cur);
+    if (i < 0) return s[0];
+    if (st.mode === "shuffle" && i + d >= s.length) { st.order = shuffle(ids.slice()); return st.order[0]; } // 隨機一輪播完，重洗
+    return s[(i + d + s.length) % s.length];
+  }
+
+  // 標題開頭有編號（如 001）的清單，依編號排序；否則照 YouTube 清單順序
+  var numbered = false;
+  function numOf(id) { var m = /^(\d{1,4})/.exec(TITLES[id] || ""); return m ? +m[1] : 0; }
+  function arrange() {
+    var withNo = live.filter(function (id) { return numOf(id); }).length;
+    numbered = live.length > 0 && withNo / live.length >= 0.8;
+    ids = numbered
+      ? live.slice().sort(function (a, b) { return (numOf(a) || 1e9) - (numOf(b) || 1e9) || live.indexOf(a) - live.indexOf(b); })
+      : live.slice();
+  }
+  function epNo(id) { return (numbered && numOf(id)) || ids.indexOf(id) + 1; }
+  function titleOf(id) { return TITLES[id] || "（讀取標題中）"; }
+  function bare(t) { return (numbered ? t.replace(/^\d{1,4}\s*/, "") : t).replace(/^【(.*)】$/, "$1"); }
+  function fmt(s) { s = Math.floor(s); var m = Math.floor(s / 60); return m + ":" + String(s % 60).padStart(2, "0"); }
+
+  function render() {
+    var q = $("q").value.trim();
+    var html = "";
+    var w = String(ids.length).length < 3 ? 3 : String(ids.length).length;
+    ids.forEach(function (id) {
+      var t = titleOf(id);
+      var no = String(epNo(id)).padStart(w, "0");
+      if (q && t.indexOf(q) < 0 && no.indexOf(q) < 0) return;
+      html += '<li><button type="button" data-id="' + id + '"' + (id === st.cur ? ' aria-current="true"' : "") + '>' +
+        '<span class="n">' + no + '</span><span>' + bare(t).replace(/</g, "&lt;") + '</span>' +
+        '<span class="ok">' + (st.done[id] ? "✓" : "") + '</span></button></li>';
+    });
+    $("list").innerHTML = html;
+    var n = Object.keys(st.done).filter(function (id) { return ids.indexOf(id) >= 0; }).length;
+    $("progress").textContent = "已看完 " + n + " / " + ids.length + " 集";
+    if (st.cur) {
+      $("nowEp").textContent = "第 " + epNo(st.cur) + " 集" + (st.mode === "shuffle" ? "・隨機播放" : "・順序播放");
+      $("nowTitle").textContent = bare(titleOf(st.cur));
+    }
+    $("modeSeq").setAttribute("aria-pressed", st.mode === "seq");
+    $("modeShuf").setAttribute("aria-pressed", st.mode === "shuffle");
+  }
+  function scrollToCur() {
+    // 只捲清單本身，不要帶動整頁（手機上影片會被捲出畫面）
+    var ol = $("list"), b = ol.querySelector('[aria-current="true"]');
+    if (b) ol.scrollTop = b.parentNode.offsetTop - ol.offsetTop - ol.clientHeight / 2;
+  }
+
+  // 用 YouTube 公開的 oEmbed 補標題（不用金鑰），讀過的存起來
+  var fetching = {};
+  function fillTitles() {
+    var todo = live.filter(function (id) { return !TITLES[id] && !fetching[id]; });
+    var i = 0, running = 0, pending = false;
+    function redraw() { if (pending) return; pending = true; setTimeout(function () { pending = false; arrange(); syncOrder(); render(); }, 400); }
+    function next() {
+      while (running < 6 && i < todo.length) {
+        (function (id) {
+          fetching[id] = 1; running++;
+          fetch("https://www.youtube.com/oembed?format=json&url=" + encodeURIComponent("https://www.youtube.com/watch?v=" + id))
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) { if (d && d.title) { TITLES[id] = d.title; store(TITLE_KEY, TITLES); redraw(); } })
+            .catch(function () {})
+            .then(function () { running--; next(); });
+        })(todo[i++]);
+      }
+    }
+    next();
+  }
+
+  // 清單更新後：重排、補標題，第一次拿到清單時建立播放器
+  function gotList(list) {
+    live = list;
+    store(LIST_KEY, { ids: live, at: Date.now() });
+    arrange(); syncOrder(); save(); render(); scrollToCur();
+    fillTitles();
+    if (!player && window.YT && YT.Player) createPlayer();
+  }
+
+  function play(id, start, auto) {
+    if (!id) return;
+    st.cur = id; st.t = start || 0; save();
+    lastT = 0; endedFor = null;
+    // 一次只載入單一影片；播放清單模式在手機上播 Shorts 會出現錯誤代碼 2
+    var opts = { videoId: id, startSeconds: st.t };
+    if (auto) player.loadVideoById(opts); else player.cueVideoById(opts);
+    $("resume").textContent = "";
+    $("fallback").hidden = true;
+    render(); scrollToCur();
+  }
+
+  // 一集播完：打勾、接下一集
+  function finish() {
+    if (endedFor === st.cur) return;
+    endedFor = st.cur;
+    st.done[st.cur] = 1;
+    play(step(1), 0, true);
+  }
+
+  // 開始播放後，影片框依直式比例放大，並捲到頁首，保留標題
+  function enlarge() {
+    var sc = document.querySelector(".screen");
+    if (sc.classList.contains("big")) return;
+    document.documentElement.style.setProperty("--head-h", document.querySelector("header").offsetHeight + "px");
+    sc.classList.add("big");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function createPlayer() {
+    if (player || !ids.length) return;
+    // 第一集直接在建立播放器時指定（先建空播放器再 cue，手機上播 Shorts 會出現錯誤代碼 2）
+    var resumeT = 0;
+    if (!st.cur || ids.indexOf(st.cur) < 0) { st.cur = st.mode === "shuffle" ? st.order[0] : ids[0]; st.t = 0; }
+    else if (st.t > 5) {
+      resumeT = Math.floor(st.t - 3);
+      $("resume").textContent = "上次看到這裡：" + fmt(st.t) + "，按播放繼續";
+    }
+    st.t = resumeT; save(); render(); scrollToCur();
+    // origin 讓 YouTube 認得來源；搭配頁首的 referrer meta
+    player = new YT.Player("yt", {
+      videoId: st.cur,
+      playerVars: { rel: 0, playsinline: 1, start: resumeT, origin: location.origin },
+      events: {
+        onReady: function () { ready = true; },
+        onError: function (e) { showFallback("這裡無法內嵌播放（錯誤代碼 " + e.data + "）"); },
+        onStateChange: function (e) {
+          if (e.data === YT.PlayerState.PLAYING) { $("resume").textContent = ""; $("fallback").hidden = true; enlarge(); }
+          if (e.data === YT.PlayerState.ENDED) finish();
+        }
+      }
+    });
+  }
+
+  // 讀清單：隱形播放器用播放清單模式載入（不播放），向它要影片 ID（不用金鑰，最多 200 部）
+  function readList() {
+    var tries = 0, done = false;
+    var reader = new YT.Player("reader", {
+      playerVars: { listType: "playlist", list: LIST, origin: location.origin },
+      events: {
+        onReady: poll,
+        onStateChange: poll,
+        onError: function () { if (!done && !live.length) showFallback("讀不到這個播放清單，請確認它是「公開」的"); }
+      }
+    });
+    function poll() {
+      if (done) return;
+      var got = reader.getPlaylist && reader.getPlaylist();
+      if (got && got.length) {
+        done = true;
+        var changed = got.length !== live.length || got.some(function (id, i) { return live[i] !== id; });
+        if (changed || !player) gotList(got);
+        else store(LIST_KEY, { ids: got, at: Date.now() });
+        setTimeout(function () { try { reader.destroy(); } catch (e) {} }, 0);
+        return;
+      }
+      if (++tries < 40) setTimeout(poll, 300);
+      else if (!live.length) showFallback("讀不到這個播放清單，請確認它是「公開」的");
+    }
+  }
+
+  window.onYouTubeIframeAPIReady = function () {
+    if (live.length) createPlayer();
+    readList();
+  };
+
+  function showFallback(msg) {
+    $("fallback").hidden = false;
+    $("fbMsg").textContent = msg;
+    $("fbYt").href = st.cur
+      ? "https://www.youtube.com/watch?v=" + st.cur + "&list=" + LIST + (st.t > 5 ? "&t=" + Math.floor(st.t) + "s" : "")
+      : "https://www.youtube.com/playlist?list=" + LIST;
+  }
+  if (/\bLine\//i.test(navigator.userAgent)) {
+    // LINE 內建瀏覽器：提示改用外部瀏覽器開啟（LINE 支援 openExternalBrowser=1 參數）
+    $("lineTip").hidden = false;
+    $("lineOpen").href = location.origin + location.pathname + "?list=" + LIST + "&openExternalBrowser=1";
+  }
+
+  // 自製進度條：手機上的 Shorts 播放器沒有進度條，播完也不會停，會自己從頭重播
+  var lastT = 0, endedFor = null, dragging = false, lastSave = 0;
+  setInterval(function () {
+    if (!ready || !player.getPlayerState) return;
+    var state = player.getPlayerState(), t = player.getCurrentTime() || 0, d = player.getDuration() || 0;
+    if (d && !dragging) {
+      $("seek").max = d; $("seek").value = t;
+      $("time").textContent = fmt(t) + " / " + fmt(d);
+    }
+    if (state !== YT.PlayerState.PLAYING) return;
+    // 從片尾跳回片頭 = Shorts 自動重播，視為播完
+    if (d && lastT > d - 2 && t < 2) { finish(); return; }
+    if (d && t >= d - 0.4) { finish(); return; }
+    lastT = t;
+    st.t = t;
+    if (d && t / d > 0.95 && !st.done[st.cur]) { st.done[st.cur] = 1; render(); }
+    if (Date.now() - lastSave > 5000) { save(); lastSave = Date.now(); }
+  }, 250);
+  $("seek").addEventListener("input", function () { dragging = true; $("time").textContent = fmt(+this.value) + " / " + fmt(+this.max); });
+  $("seek").addEventListener("change", function () {
+    dragging = false;
+    if (!ready) return;
+    lastT = +this.value; endedFor = null;
+    player.seekTo(+this.value, true);
+  });
+  window.addEventListener("pagehide", function () {
+    if (ready && player.getCurrentTime) { st.t = player.getCurrentTime(); save(); }
+  });
+
+  $("prevBtn").addEventListener("click", function () { if (ready) play(step(-1), 0, true); });
+  $("nextBtn").addEventListener("click", function () { if (ready) play(step(1), 0, true); });
+  $("modeSeq").addEventListener("click", function () { st.mode = "seq"; save(); render(); });
+  $("modeShuf").addEventListener("click", function () {
+    if (st.mode !== "shuffle") { st.order = shuffle(ids.slice()); var i = st.order.indexOf(st.cur); if (i > 0) { st.order.splice(i, 1); st.order.unshift(st.cur); } }
+    st.mode = "shuffle"; save(); render();
+  });
+  $("list").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-id]");
+    if (b && ready) play(b.dataset.id, 0, true);
+  });
+  $("q").addEventListener("input", render);
+
+  function loadApi() {
+    var s = document.createElement("script");
+    s.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(s);
+  }
+
+  // 先用上次存的清單畫出來，再載入 YouTube 讀最新清單
+  arrange(); syncOrder(); render(); scrollToCur(); loadApi();
+})();
+</script>
+</body>
+</html>
